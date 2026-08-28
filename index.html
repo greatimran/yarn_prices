@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Live Auto-Scrolling & Paginated Yarn Prices</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Arial, sans-serif;
+            margin: 20px;
+            background-color: #f9f9f9;
+        }
+
+        h2 {
+            color: #333;
+            margin-bottom: 5px;
+        }
+
+        /* Interactive Filter Bar Styling */
+        .filter-container {
+            background-color: #ffffff;
+            padding: 15px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+            margin-bottom: 20px;
+            display: flex;
+            gap: 15px;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+
+        .filter-group {
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+        }
+
+        select {
+            padding: 6px 12px;
+            border-radius: 4px;
+            border: 1px solid #ccc;
+            font-size: 14px;
+            min-width: 160px;
+            background-color: #fff;
+            outline: none;
+        }
+
+        select:focus {
+            border-color: #007bff;
+        }
+
+        /* Short, predictable viewport so every row in a 20-row page scrolls into view. */
+        .table-scroll-container {
+            width: 100%;
+            height: 420px;
+            max-height: 60vh;
+            min-height: 240px;
+            overflow-y: auto;
+            border: 1px solid #dddddd;
+            background-color: #ffffff;
+            border-radius: 8px 8px 0 0;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
+            position: relative;
+        }
+
+        table {
+            border-collapse: collapse;
+            width: 100%;
+        }
+
+        th {
+            background-color: #007bff;
+            color: white;
+            position: sticky;
+            top: 0;
+            z-index: 10;
+            padding: 12px 8px;
+            text-align: left;
+        }
+
+        td {
+            border-bottom: 1px solid #dddddd;
+            text-align: left;
+            padding: 12px 8px;
+            font-size: 14px;
+            line-height: 20px;
+        }
+
+        tr:nth-child(even) {
+            background-color: #f8f9fa;
+        }
+
+        /* Sticky Pagination Footer Bar */
+        .pagination-footer {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background-color: #f1f1f1;
+            padding: 12px 15px;
+            border: 1px solid #dddddd;
+            border-top: none;
+            border-radius: 0 0 8px 8px;
+            font-size: 14px;
+            color: #444;
+            font-weight: 500;
+        }
+
+        .status {
+            font-style: italic;
+            color: #666;
+            font-size: 14px;
+            margin-bottom: 15px;
+        }
+    </style>
+</head>
+
+<body>
+
+    <h2>🔄 Live Yarn Price Feed</h2>
+    <div id="connection-status" class="status">Connecting to server feed...</div>
+
+    <!-- 🔍 Interactive Dropdown Filters Section -->
+    <div class="filter-container">
+        <div class="filter-group">
+            <label for="filter-date">Date:</label>
+            <select id="filter-date" onchange="resetToFirstPage()">
+                <option value=""> All Dates </option>
+            </select>
+        </div>
+        <div class="filter-group">
+            <label for="filter-mill">Mill Name:</label>
+            <select id="filter-mill" onchange="resetToFirstPage()">
+                <option value=""> All Mills </option>
+            </select>
+        </div>
+        <div class="filter-group">
+            <label for="filter-count">Yarn Count:</label>
+            <select id="filter-count" onchange="resetToFirstPage()">
+                <option value=""> All Counts </option>
+            </select>
+        </div>
+    </div>
+
+    <!-- 📜 Smooth auto-scrolling window for the current 20-record page -->
+    <div class="table-scroll-container" id="scroll-box">
+        <table id="yarn-table">
+            <thead>
+                <tr>
+                    <th>Date</th>
+                    <th>Category</th>
+                    <th>Yarn_Count</th>
+                    <th>Yarn_Category</th>
+                    <th>Ratio</th>
+                    <th>Price</th>
+                    <th>Mill_Name</th>
+                </tr>
+            </thead>
+            <tbody id="table-body"></tbody>
+        </table>
+    </div>
+
+    <!-- 📄 Pagination and dynamic record status footer bar -->
+    <div class="pagination-footer">
+        <span id="page-indicator">Page 1 of 1</span>
+        <span id="record-count">Total Records: 0</span>
+        <button id="prev-btn" type="button" onclick="prevPage()">← Prev</button>
+        <button id="next-btn" type="button" onclick="nextPage()">Next →</button>
+    </div>
+
+    <script>
+        const statusDiv = document.getElementById("connection-status");
+        const tbody = document.getElementById("table-body");
+        const scrollBox = document.getElementById("scroll-box");
+        const pageIndicator = document.getElementById("page-indicator");
+        const recordCount = document.getElementById("record-count");
+
+        let rawDataset = [];
+        let filteredDataset = [];
+        let dropdownsInitialized = false;
+        let scrollInterval = null;
+        let pageDelayTimeout = null;
+        let lastDatasetSignature = "";
+
+        let currentPage = 1;
+        const RECORDS_PER_PAGE = 20;
+        const SCROLL_STEP = 2;
+        const SCROLL_INTERVAL_MS = 180;
+        const PAGE_DELAY_MS = 2000;
+
+        // Establish the secure real-time WebSocket connection to your backend station
+        const ws = new WebSocket(`ws://${window.location.host}/ws/prices`);
+
+        ws.onopen = () => { statusDiv.innerText = "🟢 Connected to live stream feed."; };
+        ws.onclose = () => { statusDiv.innerText = "🔴 Disconnected from stream feed."; stopAutoScrollingLoop(); };
+
+        ws.onmessage = function (event) {
+            const nextDataset = JSON.parse(event.data);
+            const nextDatasetSignature = JSON.stringify(nextDataset);
+
+            // The server broadcasts every 3 seconds; do not reset scrolling for unchanged data.
+            if (nextDatasetSignature === lastDatasetSignature) {
+                return;
+            }
+
+            rawDataset = nextDataset;
+            lastDatasetSignature = nextDatasetSignature;
+
+            if (!dropdownsInitialized && rawDataset.length > 0) {
+                initializeDropdowns();
+                dropdownsInitialized = true;
+            }
+            processAndRenderData();
+        };
+
+        // Populates interactive filters dynamically from the data file array structure
+        function initializeDropdowns() {
+            const dates = [...new Set(rawDataset.map(item => item.Date).filter(Boolean))].sort();
+            const mills = [...new Set(rawDataset.map(item => item.Mill_Name).filter(Boolean))].sort();
+
+            // Smart Numerical Sorting Rule: Extracts digits via parseInt to correctly put single digits like "8" or "8PV" at the top
+            const counts = [...new Set(rawDataset.map(item => item.Yarn_Count).filter(Boolean))].sort((a, b) => parseInt(a) - parseInt(b));
+
+            document.getElementById("filter-date").innerHTML = '<option value=""> All Dates </option>' + dates.map(d => `<option value="${d}">${d}</option>`).join('');
+            document.getElementById("filter-mill").innerHTML = '<option value=""> All Mills </option>' + mills.map(m => `<option value="${m}">${m}</option>`).join('');
+            document.getElementById("filter-count").innerHTML = '<option value=""> All Counts </option>' + counts.map(c => `<option value="${c}">${c}</option>`).join('');
+        }
+
+        function prevPage() {
+            if (currentPage > 1) {
+                currentPage--;
+            } else {
+                currentPage = getTotalPages();
+            }
+            renderCurrentPage();
+        }
+
+        function nextPage() {
+            const totalPages = getTotalPages();
+            currentPage = currentPage < totalPages ? currentPage + 1 : 1;
+            renderCurrentPage();
+        }
+
+        function resetToFirstPage() {
+            currentPage = 1;
+            processAndRenderData();
+        }
+
+        function processAndRenderData() {
+            const selectedDate = document.getElementById("filter-date").value;
+            const selectedMill = document.getElementById("filter-mill").value;
+            const selectedCount = document.getElementById("filter-count").value;
+
+            filteredDataset = rawDataset.filter(item => {
+                const matchDate = !selectedDate || String(item.Date) === selectedDate;
+                const matchMill = !selectedMill || String(item.Mill_Name) === selectedMill;
+                const matchCount = !selectedCount || String(item.Yarn_Count) === selectedCount;
+                return matchDate && matchMill && matchCount;
+            });
+
+            if (currentPage > getTotalPages()) {
+                currentPage = 1;
+            }
+
+            renderCurrentPage();
+        }
+
+        function getTotalPages() {
+            return Math.max(1, Math.ceil(filteredDataset.length / RECORDS_PER_PAGE));
+        }
+
+        function renderCurrentPage() {
+            stopAutoScrollingLoop();
+            tbody.innerHTML = "";
+            const totalPages = getTotalPages();
+            const pageStart = (currentPage - 1) * RECORDS_PER_PAGE;
+            const pageItems = filteredDataset.slice(pageStart, pageStart + RECORDS_PER_PAGE);
+
+            recordCount.innerText = `Total Records: ${filteredDataset.length}`;
+            pageIndicator.innerText = `Page ${currentPage} of ${totalPages}`;
+
+            if (filteredDataset.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="7" style="text-align:center; padding: 30px;">No matching records found.</td></tr>';
+                updatePaginationButtons(totalPages);
+                return;
+            }
+
+            let rowsHtml = "";
+            pageItems.forEach(item => {
+                rowsHtml += `<tr>
+                    <td>${item.Date || ''}</td>
+                    <td>${item.Category || ''}</td>
+                    <td>${item.Yarn_Count || ''}</td>
+                    <td>${item.Yarn_Category || ''}</td>
+                    <td>${item.Ratio || ''}</td>
+                    <td><strong>${item.Price || ''}</strong></td>
+                    <td>${item.Mill_Name || ''}</td>
+                </tr>`;
+            });
+
+            tbody.innerHTML = rowsHtml;
+            scrollBox.scrollTop = 0;
+            updatePaginationButtons(totalPages);
+            startAutoScrollingLoop();
+        }
+
+        function updatePaginationButtons(totalPages) {
+            document.getElementById("prev-btn").disabled = totalPages <= 1;
+            document.getElementById("next-btn").disabled = totalPages <= 1;
+        }
+
+        function startAutoScrollingLoop() {
+            stopAutoScrollingLoop();
+            if (filteredDataset.length === 0) {
+                return;
+            }
+
+            scrollInterval = setInterval(() => {
+                const atBottom = scrollBox.scrollTop + scrollBox.clientHeight >= scrollBox.scrollHeight - 1;
+                if (atBottom) {
+                    stopAutoScrollingLoop();
+                    pageDelayTimeout = setTimeout(nextPage, PAGE_DELAY_MS);
+                    return;
+                }
+                scrollBox.scrollTop += SCROLL_STEP;
+            }, SCROLL_INTERVAL_MS);
+        }
+
+        function stopAutoScrollingLoop() {
+            if (scrollInterval !== null) {
+                clearInterval(scrollInterval);
+                scrollInterval = null;
+            }
+            if (pageDelayTimeout !== null) {
+                clearTimeout(pageDelayTimeout);
+                pageDelayTimeout = null;
+            }
+        }
+
+        // Auto-reset if no data exists
+        processAndRenderData();
+    </script>
+</body>
+
+</html>
