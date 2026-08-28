@@ -188,30 +188,75 @@
         const SCROLL_INTERVAL_MS = 180;
         const PAGE_DELAY_MS = 2000;
 
-        // Establish the secure real-time WebSocket connection to your backend station
-        const ws = new WebSocket(`ws://${window.location.host}/ws/prices`);
+        // GitHub Pages serves static files, so load the CSV directly instead of using FastAPI/WebSocket.
+        loadCsvData();
 
-        ws.onopen = () => { statusDiv.innerText = "🟢 Connected to live stream feed."; };
-        ws.onclose = () => { statusDiv.innerText = "🔴 Disconnected from stream feed."; stopAutoScrollingLoop(); };
+        async function loadCsvData() {
+            try {
+                const response = await fetch("yarn_rates.csv");
+                if (!response.ok) {
+                    throw new Error(`CSV request failed with HTTP ${response.status}`);
+                }
 
-        ws.onmessage = function (event) {
-            const nextDataset = JSON.parse(event.data);
-            const nextDatasetSignature = JSON.stringify(nextDataset);
+                rawDataset = parseCsv(await response.text());
+                lastDatasetSignature = JSON.stringify(rawDataset);
+                statusDiv.innerText = `🟢 Loaded ${rawDataset.length} records from yarn_rates.csv.`;
 
-            // The server broadcasts every 3 seconds; do not reset scrolling for unchanged data.
-            if (nextDatasetSignature === lastDatasetSignature) {
-                return;
+                if (rawDataset.length > 0) {
+                    initializeDropdowns();
+                    dropdownsInitialized = true;
+                }
+                processAndRenderData();
+            } catch (error) {
+                statusDiv.innerText = `🔴 Could not load yarn_rates.csv: ${error.message}`;
+                processAndRenderData();
+            }
+        }
+
+        function parseCsv(csvText) {
+            const rows = [];
+            let row = [];
+            let field = "";
+            let insideQuotes = false;
+
+            for (let index = 0; index < csvText.length; index++) {
+                const character = csvText[index];
+                const nextCharacter = csvText[index + 1];
+
+                if (character === '"' && insideQuotes && nextCharacter === '"') {
+                    field += '"';
+                    index++;
+                } else if (character === '"') {
+                    insideQuotes = !insideQuotes;
+                } else if (character === "," && !insideQuotes) {
+                    row.push(field.trim());
+                    field = "";
+                } else if ((character === "\n" || character === "\r") && !insideQuotes) {
+                    if (character === "\r" && nextCharacter === "\n") {
+                        index++;
+                    }
+                    row.push(field.trim());
+                    if (row.some(value => value !== "")) {
+                        rows.push(row);
+                    }
+                    row = [];
+                    field = "";
+                } else {
+                    field += character;
+                }
             }
 
-            rawDataset = nextDataset;
-            lastDatasetSignature = nextDatasetSignature;
-
-            if (!dropdownsInitialized && rawDataset.length > 0) {
-                initializeDropdowns();
-                dropdownsInitialized = true;
+            if (field !== "" || row.length > 0) {
+                row.push(field.trim());
+                rows.push(row);
             }
-            processAndRenderData();
-        };
+
+            const headers = rows.shift() || [];
+            return rows.map(values => headers.reduce((record, header, index) => {
+                record[header] = values[index] || "";
+                return record;
+            }, {}));
+        }
 
         // Populates interactive filters dynamically from the data file array structure
         function initializeDropdowns() {
