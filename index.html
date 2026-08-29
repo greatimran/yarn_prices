@@ -312,8 +312,8 @@
 
                 rawDataset = parseCsv(await response.text());
                 lastDatasetSignature = JSON.stringify(rawDataset);
-                statusDiv.innerText = `🟢 Loaded ${rawDataset.length} records from yarn_rates.csv.`;
-
+                //statusDiv.innerText = `🟢 Loaded ${rawDataset.length} records from yarn_rates.csv.`;
+                statusDiv.innerText = `🟢 Loaded ${rawDataset.length} records`; 
                 if (rawDataset.length > 0) {
                     initializeDropdowns();
                     dropdownsInitialized = true;
