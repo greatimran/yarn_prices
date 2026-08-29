@@ -112,6 +112,7 @@
             font-size: 14px;
             margin-bottom: 15px;
         }
+
         .pagination-btn {
             background-color: #4CAF50;
             /* Green background */
@@ -132,6 +133,7 @@
             transition: background-color 0.3s ease;
             /* Smooth hover effect */
         }
+
         .pagination-btn:hover {
             background-color: #45a049;
             /* Darker green on hover */
@@ -143,15 +145,68 @@
             cursor: not-allowed;
             /* Show disabled cursor */
         }
-        
+
+        /* Header & Image Alignment */
+        .header-container {
+            margin-bottom: 18px;
+
+        }
+
+        .title-row {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            margin-bottom: 4px;
+        }
+
+        .title-row h2 {
+            margin: 0;
+        }
+
+        .status {
+            margin: 0;
+            color: #666;
+            font-size: 14px;
+            font-style: italic;
+        }
+
+        .yarn-preview-container {
+            display: inline-flex;
+            align-items: center;
+        }
+
+        .yarn-preview-img {
+            height: 58px;
+            width: auto;
+            max-width: 105px;
+            object-fit: cover;
+            border-radius: 6px;
+            border: 1px solid #e0e0e0;
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.12);
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+            display: block;
+        }
+
+        .yarn-preview-img:hover {
+            transform: scale(1.08);
+            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.25);
+        }
     </style>
 </head>
 
 <body>
 
-    <h2>🔄 Live Yarn Price Feed</h2>
-    <div id="connection-status" class="status">Connecting to server feed...</div>
-
+    <div class="header-container">
+        <div class="title-row">
+            <h2>🔄 Live Yarn Price Feed</h2>
+            <div class="yarn-preview-container">
+                <a href="yarn.jpg" target="_blank" title="Click to view full image">
+                    <img src="yarn.jpg" alt="Yarn Image" class="yarn-preview-img">
+                </a>
+            </div>
+        </div>
+        <div id="connection-status" class="status">Connecting to server feed...</div>
+    </div>
     <!-- 🔍 Interactive Dropdown Filters Section -->
     <div class="filter-container">
         <div class="filter-group">
@@ -198,7 +253,7 @@
         <span id="record-count">Total Records: 0</span>
         <button id="prev-btn" type="button" class="pagination-btn" onclick="prevPage()">← Prev</button>
         <button id="next-btn" type="button" class="pagination-btn" onclick="nextPage()">Next →</button>
-     </div>
+    </div>
 
     <script>
         const statusDiv = document.getElementById("connection-status");
@@ -220,8 +275,32 @@
         const SCROLL_INTERVAL_MS = 180;
         const PAGE_DELAY_MS = 2000;
 
+        // Establish the secure real-time WebSocket connection to your backend station
+        const ws = new WebSocket(`ws://${window.location.host}/ws/prices`);
+
+        ws.onopen = () => { statusDiv.innerText = "🟢 Connected to live stream feed."; };
+        ws.onclose = () => { statusDiv.innerText = "🔴 Disconnected from stream feed."; stopAutoScrollingLoop(); };
+
+        ws.onmessage = function (event) {
+            const nextDataset = JSON.parse(event.data);
+            const nextDatasetSignature = JSON.stringify(nextDataset);
+
+            // The server broadcasts every 3 seconds; do not reset scrolling for unchanged data.
+            if (nextDatasetSignature === lastDatasetSignature) {
+                return;
+            }
+
+            rawDataset = nextDataset;
+            lastDatasetSignature = nextDatasetSignature;
+
+            if (!dropdownsInitialized && rawDataset.length > 0) {
+                initializeDropdowns();
+                dropdownsInitialized = true;
+            }
+            processAndRenderData();
+        };
         // GitHub Pages serves static files, so load the CSV directly instead of using FastAPI/WebSocket.
-        loadCsvData();
+        /*loadCsvData();
 
         async function loadCsvData() {
             try {
@@ -288,7 +367,8 @@
                 record[header] = values[index] || "";
                 return record;
             }, {}));
-        }
+        }*/
+
 
         // Populates interactive filters dynamically from the data file array structure
         function initializeDropdowns() {
