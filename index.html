@@ -276,7 +276,7 @@
         const PAGE_DELAY_MS = 2000;
 
         // Establish the secure real-time WebSocket connection to your backend station
-        const ws = new WebSocket(`ws://${window.location.host}/ws/prices`);
+       /* const ws = new WebSocket(`ws://${window.location.host}/ws/prices`);
 
         ws.onopen = () => { statusDiv.innerText = "🟢 Connected to live stream feed."; };
         ws.onclose = () => { statusDiv.innerText = "🔴 Disconnected from stream feed."; stopAutoScrollingLoop(); };
@@ -298,9 +298,10 @@
                 dropdownsInitialized = true;
             }
             processAndRenderData();
-        };
+        };*/
+        
         // GitHub Pages serves static files, so load the CSV directly instead of using FastAPI/WebSocket.
-        /*loadCsvData();
+        loadCsvData();
 
         async function loadCsvData() {
             try {
@@ -367,7 +368,7 @@
                 record[header] = values[index] || "";
                 return record;
             }, {}));
-        }*/
+        }
 
 
         // Populates interactive filters dynamically from the data file array structure
